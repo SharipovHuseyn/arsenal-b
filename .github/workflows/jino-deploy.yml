@@ -14,92 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install clients
-        run: sudo apt-get update && sudo apt-get install -y sshpass lftp rsync
-
-      - name: Find working login and deploy only to arsenal22.ru
+      - name: Deploy only to arsenal22.ru
         env:
           SSHPASS: ${{ secrets.JINO_PASSWORD }}
         run: |
-          set -uo pipefail
-          mkdir -p ~/.ssh backup
-          ssh-keyscan -p 22 -T 8 gogx.myjino.ru >> ~/.ssh/known_hosts 2>/dev/null || true
-          ssh-keyscan -p 2222 -T 8 gogx.myjino.ru >> ~/.ssh/known_hosts 2>/dev/null || true
-          export LFTP_PASSWORD="$SSHPASS"
-          SSH_OPTS="-o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=accept-new -o NumberOfPasswordPrompts=1 -o ConnectTimeout=12 -o ConnectionAttempts=1"
-
-          probe() {
-            local label="$1"; shift
-            echo ">>> $label"
-            timeout 18 "$@" && return 0
-            echo "failed: $label"
-            return 1
-          }
-
-          METHOD=""
-          if probe "SSH 22 gogx" sshpass -e ssh $SSH_OPTS -p 22 gogx@gogx.myjino.ru "pwd; ls; ls domains || true; ls domains/arsenal22.ru || true"; then
-            METHOD=ssh22
-          elif probe "SFTP 22 gogx" sshpass -e sftp $SSH_OPTS -P 22 gogx@gogx.myjino.ru <<< $'pwd\nls\nbye'; then
-            METHOD=sftp22
-          elif probe "SFTP 2222 gogx" sshpass -e sftp $SSH_OPTS -P 2222 gogx@gogx.myjino.ru <<< $'pwd\nls\nbye'; then
-            METHOD=sftp2222_gogx
-          elif probe "SFTP 2222 gogx_gogx" sshpass -e sftp $SSH_OPTS -P 2222 gogx_gogx@gogx.myjino.ru <<< $'pwd\nls\nbye'; then
-            METHOD=sftp2222_gogx_gogx
-          elif probe "FTP 21 gogx" lftp -c "set ssl:verify-certificate no; set ftp:ssl-allow yes; set net:timeout 8; set net:max-retries 1; open -u gogx ftp://gogx.myjino.ru:21; pwd; ls"; then
-            METHOD=ftp21_gogx
-          elif probe "FTP 21 gogx_gogx" lftp -c "set ssl:verify-certificate no; set ftp:ssl-allow yes; set net:timeout 8; set net:max-retries 1; open -u gogx_gogx ftp://gogx.myjino.ru:21; pwd; ls"; then
-            METHOD=ftp21_gogx_gogx
-          else
-            echo "All login variants failed"
-            exit 1
-          fi
-          echo "Using $METHOD"
-          set -e
-
-          EXCLUDES="--exclude .git --exclude .github --exclude .gitignore --exclude .DS_Store"
-          if [ "$METHOD" = "ssh22" ]; then
-            sshpass -e ssh $SSH_OPTS -p 22 gogx@gogx.myjino.ru 'mkdir -p domains/arsenal22.ru ~/tmp'
-            sshpass -e rsync -avz $EXCLUDES \
-              -e "sshpass -e ssh $SSH_OPTS -p 22" \
-              ./ gogx@gogx.myjino.ru:domains/arsenal22.ru/
-            sshpass -e ssh $SSH_OPTS -p 22 gogx@gogx.myjino.ru 'cd domains/arsenal22.ru && mv -f index.php index.php.bak 2>/dev/null; mv -f passenger_wsgi.py passenger_wsgi.py.bak 2>/dev/null; ls -la'
-          elif [[ "$METHOD" == sftp22* ]]; then
-            PORT=22
-            USER=gogx
-            [ "$METHOD" = "sftp2222_gogx_gogx" ] && USER=gogx_gogx
-            [ "$METHOD" = "sftp2222_gogx" ] && PORT=2222 && USER=gogx
-            [ "$METHOD" = "sftp2222_gogx_gogx" ] && PORT=2222
-            lftp -c "
-            set sftp:auto-confirm yes; set net:max-retries 2; set net:timeout 20
-            open -u $USER sftp://gogx.myjino.ru:$PORT
-            mkdir -p domains/arsenal22.ru
-            cd domains/arsenal22.ru
-            mirror -R --verbose --exclude-glob .git --exclude-glob .github --exclude-glob .gitignore --exclude-glob .DS_Store ./ .
-            mv index.php index.php.bak || true
-            mv passenger_wsgi.py passenger_wsgi.py.bak || true
-            cls -1
-            "
-          else
-            USER=gogx
-            [ "$METHOD" = "ftp21_gogx_gogx" ] && USER=gogx_gogx
-            lftp -c "
-            set ssl:verify-certificate no; set ftp:ssl-allow yes; set net:timeout 20; set net:max-retries 2
-            open -u $USER ftp://gogx.myjino.ru:21
-            mkdir -p domains/arsenal22.ru
-            cd domains/arsenal22.ru
-            mirror -R --verbose --exclude-glob .git --exclude-glob .github --exclude-glob .gitignore --exclude-glob .DS_Store ./ .
-            mv index.php index.php.bak || true
-            mv passenger_wsgi.py passenger_wsgi.py.bak || true
-            cls -1
-            "
-          fi
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: arsenal22-before-deploy
-          path: backup
-          if-no-files-found: ignore
+          python3 -m pip install --user paramiko
+          python3 .github/scripts/deploy-jino.py
 
       - name: Check live site
         if: success()
