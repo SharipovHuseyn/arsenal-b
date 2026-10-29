@@ -2,10 +2,6 @@ name: Deploy to Jino
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths-ignore:
-      - ".github/workflows/pages.yml"
 
 concurrency:
   group: jino-deploy
