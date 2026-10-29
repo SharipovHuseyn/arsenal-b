@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2A1210"/>
+      <stop offset="1" stop-color="#140706"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#g)"/>
+  <circle cx="980" cy="140" r="180" fill="#E10600" opacity="0.55"/>
+  <circle cx="180" cy="520" r="140" fill="#F4E4D0" opacity="0.18"/>
+  <text x="80" y="300" fill="#FFF8F1" font-family="Manrope, sans-serif" font-size="68" font-weight="700">Арсенал безопасности</text>
+  <text x="80" y="380" fill="#F4E4D0" font-family="Manrope, sans-serif" font-size="32">Монтаж охранно-пожарных систем</text>
+</svg>
