@@ -7,6 +7,10 @@ from ftplib import FTP, error_perm
 
 HOST = "gogx.myjino.ru"
 PASSWORD = os.environ["SSHPASS"]
+
+
+def ipv4(host: str) -> str:
+    return socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
 USERS = ["gogx_arsenal22", "arsenal22", "gogx-arsenal22"]
 SKIP_NAMES = {".git", ".github", ".gitignore", ".DS_Store"}
 LOCAL_ROOT = os.getcwd()
@@ -149,8 +153,9 @@ class FtpClient:
 def try_sftp(user: str, port: int):
     import paramiko
 
-    log(f">>> SFTP {port} {user}")
-    sock = socket.create_connection((HOST, port), timeout=12)
+    ip = ipv4(HOST)
+    log(f">>> SFTP {port} {user} via {ip}")
+    sock = socket.create_connection((ip, port), timeout=12)
     sock.settimeout(20)
     transport = paramiko.Transport(sock)
     transport.banner_timeout = 12
@@ -166,9 +171,10 @@ def try_sftp(user: str, port: int):
 
 
 def try_ftp(user: str):
-    log(f">>> FTP 21 {user}")
+    ip = ipv4(HOST)
+    log(f">>> FTP 21 {user} via {ip}")
     ftp = FTP()
-    ftp.connect(HOST, 21, timeout=15)
+    ftp.connect(ip, 21, timeout=15)
     ftp.login(user, PASSWORD)
     ftp.set_pasv(True)
     client = FtpClient(user, ftp)
