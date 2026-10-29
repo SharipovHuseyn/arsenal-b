@@ -1,0 +1,107 @@
+name: Deploy to Jino
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - ".github/workflows/pages.yml"
+
+concurrency:
+  group: jino-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SFTP client
+        run: sudo apt-get update && sudo apt-get install -y sshpass lftp
+
+      - name: Inspect hosting layout
+        env:
+          SSHPASS: ${{ secrets.JINO_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          ssh-keyscan -p 2222 -T 15 gogx.myjino.ru >> ~/.ssh/known_hosts 2>/dev/null || true
+          echo "=== remote listing ==="
+          sshpass -e sftp -o StrictHostKeyChecking=accept-new -P 2222 gogx@gogx.myjino.ru <<'EOF'
+          pwd
+          ls
+          bye
+          EOF
+          echo "=== domains ==="
+          sshpass -e sftp -o StrictHostKeyChecking=accept-new -P 2222 gogx@gogx.myjino.ru <<'EOF' || true
+          ls domains
+          ls domains/arsenal22.ru
+          bye
+          EOF
+
+      - name: Backup current arsenal22.ru
+        env:
+          SSHPASS: ${{ secrets.JINO_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p backup
+          sshpass -e sftp -o StrictHostKeyChecking=accept-new -P 2222 gogx@gogx.myjino.ru <<'EOF' || true
+          get -r domains/arsenal22.ru backup/arsenal22.ru
+          bye
+          EOF
+          ls -la backup || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arsenal22-before-deploy
+          path: backup
+          if-no-files-found: ignore
+
+      - name: Upload site into domains/arsenal22.ru only
+        env:
+          SSHPASS: ${{ secrets.JINO_PASSWORD }}
+        run: |
+          set -euo pipefail
+          export LFTP_PASSWORD="$SSHPASS"
+          lftp -c "
+          set sftp:auto-confirm yes
+          set net:max-retries 2
+          set net:timeout 20
+          open -u gogx sftp://gogx.myjino.ru:2222
+          mkdir -p domains/arsenal22.ru
+          cd domains/arsenal22.ru
+          mirror -R --verbose \
+            --exclude-glob .git \
+            --exclude-glob .github \
+            --exclude-glob .gitignore \
+            --exclude-glob .DS_Store \
+            ./ .
+          cls -1
+          "
+
+      - name: Neutralize leftover PHP/Python that can cause HTTP 500
+        env:
+          SSHPASS: ${{ secrets.JINO_PASSWORD }}
+        run: |
+          set -euo pipefail
+          sshpass -e sftp -o StrictHostKeyChecking=accept-new -P 2222 gogx@gogx.myjino.ru <<'EOF' || true
+          rename domains/arsenal22.ru/index.php domains/arsenal22.ru/index.php.bak
+          rename domains/arsenal22.ru/passenger_wsgi.py domains/arsenal22.ru/passenger_wsgi.py.bak
+          bye
+          EOF
+
+      - name: Check live site
+        run: |
+          set -euo pipefail
+          sleep 5
+          echo "=== http://arsenal22.ru ==="
+          curl -sI --max-time 20 http://arsenal22.ru | head -20
+          echo "=== https://arsenal22.ru ==="
+          curl -skI --max-time 20 https://arsenal22.ru | head -20
+          echo "=== body title ==="
+          curl -sL --max-time 20 http://arsenal22.ru | grep -oE '<title>[^<]+</title>' | head -3
+          echo "=== technical domain should stay untouched ==="
+          curl -sI --max-time 20 http://gogx.myjino.ru | head -10
