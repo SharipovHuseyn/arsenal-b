@@ -18,39 +18,84 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SFTP client
+      - name: Install clients
         run: sudo apt-get update && sudo apt-get install -y sshpass lftp
 
-      - name: Inspect hosting layout
+      - name: Find working login and deploy only to arsenal22.ru
         env:
           SSHPASS: ${{ secrets.JINO_PASSWORD }}
         run: |
           set -euo pipefail
-          mkdir -p ~/.ssh
-          ssh-keyscan -p 2222 -T 15 gogx.myjino.ru >> ~/.ssh/known_hosts 2>/dev/null || true
-          echo "=== remote listing ==="
-          sshpass -e sftp -o StrictHostKeyChecking=accept-new -P 2222 gogx@gogx.myjino.ru <<'EOF'
+          mkdir -p ~/.ssh backup
+          ssh-keyscan -p 2222 -T 10 gogx.myjino.ru >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -p 22 -T 10 gogx.myjino.ru >> ~/.ssh/known_hosts 2>/dev/null || true
+          export LFTP_PASSWORD="$SSHPASS"
+          SFTP_OPTS="-o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=accept-new -o NumberOfPasswordPrompts=1"
+
+          try_sftp() {
+            local user="$1"
+            echo "Trying SFTP 2222 as $user"
+            sshpass -e sftp $SFTP_OPTS -P 2222 "$user@gogx.myjino.ru" <<'EOF'
           pwd
           ls
           bye
           EOF
-          echo "=== domains ==="
-          sshpass -e sftp -o StrictHostKeyChecking=accept-new -P 2222 gogx@gogx.myjino.ru <<'EOF' || true
-          ls domains
-          ls domains/arsenal22.ru
-          bye
-          EOF
+          }
 
-      - name: Backup current arsenal22.ru
-        env:
-          SSHPASS: ${{ secrets.JINO_PASSWORD }}
-        run: |
-          set -euo pipefail
-          mkdir -p backup
-          sshpass -e sftp -o StrictHostKeyChecking=accept-new -P 2222 gogx@gogx.myjino.ru <<'EOF' || true
+          try_ftp() {
+            local user="$1"
+            echo "Trying FTP 21 as $user"
+            lftp -c "set ssl:verify-certificate no; set ftp:ssl-allow yes; set net:timeout 15; open -u $user ftp://gogx.myjino.ru:21; pwd; ls"
+          }
+
+          USERNAME=""
+          PROTO=""
+          if try_sftp gogx; then USERNAME=gogx; PROTO=sftp
+          elif try_sftp gogx_gogx; then USERNAME=gogx_gogx; PROTO=sftp
+          elif try_ftp gogx; then USERNAME=gogx; PROTO=ftp
+          elif try_ftp gogx_gogx; then USERNAME=gogx_gogx; PROTO=ftp
+          else
+            echo "All login variants failed"
+            exit 1
+          fi
+          echo "Using $PROTO as $USERNAME"
+
+          if [ "$PROTO" = "sftp" ]; then
+            sshpass -e sftp $SFTP_OPTS -P 2222 "$USERNAME@gogx.myjino.ru" <<'EOF' || true
           get -r domains/arsenal22.ru backup/arsenal22.ru
           bye
           EOF
+            lftp -c "
+            set sftp:auto-confirm yes
+            set net:max-retries 2
+            set net:timeout 20
+            open -u $USERNAME sftp://gogx.myjino.ru:2222
+            mkdir -p domains/arsenal22.ru
+            cd domains/arsenal22.ru
+            mirror -R --verbose --exclude-glob .git --exclude-glob .github --exclude-glob .gitignore --exclude-glob .DS_Store ./ .
+            cls -1
+            "
+            sshpass -e sftp $SFTP_OPTS -P 2222 "$USERNAME@gogx.myjino.ru" <<'EOF' || true
+          rename domains/arsenal22.ru/index.php domains/arsenal22.ru/index.php.bak
+          rename domains/arsenal22.ru/passenger_wsgi.py domains/arsenal22.ru/passenger_wsgi.py.bak
+          bye
+          EOF
+          else
+            lftp -c "
+            set ssl:verify-certificate no
+            set ftp:ssl-allow yes
+            set net:timeout 20
+            set net:max-retries 2
+            open -u $USERNAME ftp://gogx.myjino.ru:21
+            mkdir -p domains/arsenal22.ru
+            mirror -R --verbose domains/arsenal22.ru backup/arsenal22.ru || true
+            cd domains/arsenal22.ru
+            mirror -R --verbose --exclude-glob .git --exclude-glob .github --exclude-glob .gitignore --exclude-glob .DS_Store ./ .
+            cls -1
+            mv index.php index.php.bak || true
+            mv passenger_wsgi.py passenger_wsgi.py.bak || true
+            "
+          fi
           ls -la backup || true
 
       - uses: actions/upload-artifact@v4
@@ -60,40 +105,8 @@ jobs:
           path: backup
           if-no-files-found: ignore
 
-      - name: Upload site into domains/arsenal22.ru only
-        env:
-          SSHPASS: ${{ secrets.JINO_PASSWORD }}
-        run: |
-          set -euo pipefail
-          export LFTP_PASSWORD="$SSHPASS"
-          lftp -c "
-          set sftp:auto-confirm yes
-          set net:max-retries 2
-          set net:timeout 20
-          open -u gogx sftp://gogx.myjino.ru:2222
-          mkdir -p domains/arsenal22.ru
-          cd domains/arsenal22.ru
-          mirror -R --verbose \
-            --exclude-glob .git \
-            --exclude-glob .github \
-            --exclude-glob .gitignore \
-            --exclude-glob .DS_Store \
-            ./ .
-          cls -1
-          "
-
-      - name: Neutralize leftover PHP/Python that can cause HTTP 500
-        env:
-          SSHPASS: ${{ secrets.JINO_PASSWORD }}
-        run: |
-          set -euo pipefail
-          sshpass -e sftp -o StrictHostKeyChecking=accept-new -P 2222 gogx@gogx.myjino.ru <<'EOF' || true
-          rename domains/arsenal22.ru/index.php domains/arsenal22.ru/index.php.bak
-          rename domains/arsenal22.ru/passenger_wsgi.py domains/arsenal22.ru/passenger_wsgi.py.bak
-          bye
-          EOF
-
       - name: Check live site
+        if: success()
         run: |
           set -euo pipefail
           sleep 5
