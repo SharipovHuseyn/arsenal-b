@@ -11,7 +11,7 @@ PASSWORD = os.environ["SSHPASS"]
 
 def ipv4(host: str) -> str:
     return socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
-USERS = ["gogx_arsenal22", "arsenal22", "gogx-arsenal22"]
+USERS = ["gogx_arsenal22", "gogx", "arsenal22", "root"]
 SKIP_NAMES = {".git", ".github", ".gitignore", ".DS_Store"}
 LOCAL_ROOT = os.getcwd()
 
